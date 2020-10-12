@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,21 @@
  */
 package com.alibaba.druid.sql.ast;
 
+import com.alibaba.druid.sql.dialect.oracle.ast.OracleSegmentAttributesImpl;
 import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
-public class SQLSubPartition extends SQLObjectImpl {
-
+public class SQLSubPartition extends OracleSegmentAttributesImpl {
     protected SQLName           name;
-
     protected SQLPartitionValue values;
+    protected SQLName           tableSpace;
+
+    // for mysql
+    protected SQLExpr           dataDirectory;
+    protected SQLExpr           indexDirectory;
+    protected SQLExpr           maxRows;
+    protected SQLExpr           minRows;
+    protected SQLExpr           engine;
+    protected SQLExpr           comment;
 
     public SQLName getName() {
         return name;
@@ -45,13 +53,90 @@ public class SQLSubPartition extends SQLObjectImpl {
         this.values = values;
     }
 
+    public SQLName getTableSpace() {
+        return tableSpace;
+    }
+
+    public void setTableSpace(SQLName tableSpace) {
+        if (tableSpace != null) {
+            tableSpace.setParent(this);
+        }
+        this.tableSpace = tableSpace;
+    }
+
+    public SQLExpr getDataDirectory() {
+        return dataDirectory;
+    }
+
+    public void setDataDirectory(SQLExpr dataDirectory) {
+        this.dataDirectory = dataDirectory;
+    }
+
+    public SQLExpr getIndexDirectory() {
+        return indexDirectory;
+    }
+
+    public void setIndexDirectory(SQLExpr indexDirectory) {
+        this.indexDirectory = indexDirectory;
+    }
+
+    public SQLExpr getMaxRows() {
+        return maxRows;
+    }
+
+    public void setMaxRows(SQLExpr maxRows) {
+        this.maxRows = maxRows;
+    }
+
+    public SQLExpr getMinRows() {
+        return minRows;
+    }
+
+    public void setMinRows(SQLExpr minRows) {
+        this.minRows = minRows;
+    }
+
+    public SQLExpr getEngine() {
+        return engine;
+    }
+
+    public void setEngine(SQLExpr engine) {
+        this.engine = engine;
+    }
+
+    public SQLExpr getComment() {
+        return comment;
+    }
+
+    public void setComment(SQLExpr comment) {
+        this.comment = comment;
+    }
+
     @Override
     protected void accept0(SQLASTVisitor visitor) {
         if (visitor.visit(this)) {
             acceptChild(visitor, name);
+            acceptChild(visitor, tableSpace);
             acceptChild(visitor, values);
         }
         visitor.endVisit(this);
     }
 
+    public SQLSubPartition clone() {
+        SQLSubPartition x = new SQLSubPartition();
+
+        if (name != null) {
+            x.setName(name.clone());
+        }
+
+        if (values != null) {
+            x.setValues(values.clone());
+        }
+
+        if (tableSpace != null) {
+            x.setTableSpace(tableSpace.clone());
+        }
+
+        return x;
+    }
 }

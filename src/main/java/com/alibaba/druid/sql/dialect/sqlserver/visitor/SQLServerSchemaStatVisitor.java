@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,46 +15,27 @@
  */
 package com.alibaba.druid.sql.dialect.sqlserver.visitor;
 
-import java.util.Map;
-
-import com.alibaba.druid.sql.ast.SQLDeclareItem;
-import com.alibaba.druid.sql.ast.SQLExpr;
+import com.alibaba.druid.DbType;
 import com.alibaba.druid.sql.ast.statement.SQLInsertStatement;
 import com.alibaba.druid.sql.ast.statement.SQLSelectQueryBlock;
+import com.alibaba.druid.sql.ast.statement.SQLShowViewsStatement;
 import com.alibaba.druid.sql.dialect.sqlserver.ast.SQLServerOutput;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.SQLServerSelect;
 import com.alibaba.druid.sql.dialect.sqlserver.ast.SQLServerSelectQueryBlock;
 import com.alibaba.druid.sql.dialect.sqlserver.ast.SQLServerTop;
 import com.alibaba.druid.sql.dialect.sqlserver.ast.expr.SQLServerObjectReferenceExpr;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerCommitStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerDeclareStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerExecStatement;
+import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.*;
 import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerExecStatement.SQLServerParameter;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerInsertStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerRollbackStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerSetStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerSetTransactionIsolationLevelStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerUpdateStatement;
-import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerWaitForStatement;
+import com.alibaba.druid.sql.repository.SchemaRepository;
 import com.alibaba.druid.sql.visitor.SchemaStatVisitor;
 import com.alibaba.druid.stat.TableStat;
-import com.alibaba.druid.util.JdbcUtils;
 
 public class SQLServerSchemaStatVisitor extends SchemaStatVisitor implements SQLServerASTVisitor {
-
-    @Override
-    public String getDbType() {
-        return JdbcUtils.SQL_SERVER;
+    public SQLServerSchemaStatVisitor() {
+        super(DbType.sqlserver);
     }
 
-    @Override
-    public boolean visit(SQLServerSelectQueryBlock x) {
-        return visit((SQLSelectQueryBlock) x);
-    }
-
-    @Override
-    public void endVisit(SQLServerSelectQueryBlock x) {
-        endVisit((SQLSelectQueryBlock) x);
+    public SQLServerSchemaStatVisitor(SchemaRepository repository) {
+        super (repository);
     }
 
     @Override
@@ -78,28 +59,9 @@ public class SQLServerSchemaStatVisitor extends SchemaStatVisitor implements SQL
     }
 
     @Override
-    public boolean visit(SQLServerInsertStatement x) {
-        this.visit((SQLInsertStatement) x);
-        return false;
-    }
-
-    @Override
-    public void endVisit(SQLServerInsertStatement x) {
-        this.endVisit((SQLInsertStatement) x);
-    }
-
-    @Override
     public boolean visit(SQLServerUpdateStatement x) {
-        setAliasMap();
-
-        String ident = x.getTableName().toString();
-        setCurrentTable(ident);
-
-        TableStat stat = getTableStat(ident);
+        TableStat stat = getTableStat(x.getTableName());
         stat.incrementUpdateCount();
-
-        Map<String, String> aliasMap = getAliasMap();
-        aliasMap.put(ident, ident);
 
         accept(x.getItems());
         accept(x.getFrom());
@@ -134,58 +96,12 @@ public class SQLServerSchemaStatVisitor extends SchemaStatVisitor implements SQL
     }
 
     @Override
-    public boolean visit(SQLServerSetStatement x) {
-        return false;
-    }
-
-    @Override
-    public void endVisit(SQLServerSetStatement x) {
-
-    }
-
-    @Override
     public boolean visit(SQLServerOutput x) {
         return false;
     }
 
     @Override
     public void endVisit(SQLServerOutput x) {
-
-    }
-
-    @Override
-    public boolean visit(SQLServerDeclareStatement x) {
-        for (SQLDeclareItem item : x.getItems()) {
-            item.setParent(x);
-
-            SQLExpr name = item.getName();
-            this.variants.put(name.toString(), name);
-        }
-        return true;
-    }
-
-    @Override
-    public void endVisit(SQLServerDeclareStatement x) {
-
-    }
-
-    @Override
-    public boolean visit(SQLServerSelect x) {
-        return super.visit(x);
-    }
-
-    @Override
-    public void endVisit(SQLServerSelect x) {
-
-    }
-
-    @Override
-    public boolean visit(SQLServerCommitStatement x) {
-        return true;
-    }
-
-    @Override
-    public void endVisit(SQLServerCommitStatement x) {
 
     }
 
@@ -211,14 +127,11 @@ public class SQLServerSchemaStatVisitor extends SchemaStatVisitor implements SQL
 
 	@Override
 	public boolean visit(SQLServerParameter x) {
-		// TODO Auto-generated method stub
 		return false;
 	}
 
 	@Override
 	public void endVisit(SQLServerParameter x) {
-		// TODO Auto-generated method stub
-		
-	}
 
+	}
 }

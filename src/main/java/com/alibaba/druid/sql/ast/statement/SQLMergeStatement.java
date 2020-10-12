@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,11 @@
  */
 package com.alibaba.druid.sql.ast.statement;
 
+import com.alibaba.druid.sql.ast.*;
+import com.alibaba.druid.sql.visitor.SQLASTVisitor;
+
 import java.util.ArrayList;
 import java.util.List;
-
-import com.alibaba.druid.sql.ast.SQLExpr;
-import com.alibaba.druid.sql.ast.SQLHint;
-import com.alibaba.druid.sql.ast.SQLName;
-import com.alibaba.druid.sql.ast.SQLObjectImpl;
-import com.alibaba.druid.sql.ast.SQLStatementImpl;
-import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
 public class SQLMergeStatement extends SQLStatementImpl {
 
@@ -50,11 +46,7 @@ public class SQLMergeStatement extends SQLStatementImpl {
     }
 
     public String getAlias() {
-        return alias;
-    }
-
-    public void setAlias(String alias) {
-        this.alias = alias;
+        return into.getAlias();
     }
 
     public SQLTableSource getInto() {
@@ -145,8 +137,11 @@ public class SQLMergeStatement extends SQLStatementImpl {
             return deleteWhere;
         }
 
-        public void setDeleteWhere(SQLExpr deleteWhere) {
-            this.deleteWhere = deleteWhere;
+        public void setDeleteWhere(SQLExpr x) {
+            if (x != null) {
+                x.setParent(this);
+            }
+            this.deleteWhere = x;
         }
 
         @Override
@@ -171,8 +166,8 @@ public class SQLMergeStatement extends SQLStatementImpl {
         public void accept0(SQLASTVisitor visitor) {
             if (visitor.visit(this)) {
                 acceptChild(visitor, columns);
-                acceptChild(visitor, columns);
-                acceptChild(visitor, columns);
+                acceptChild(visitor, values);
+                acceptChild(visitor, where);
             }
             visitor.endVisit(this);
         }
@@ -197,9 +192,13 @@ public class SQLMergeStatement extends SQLStatementImpl {
             return where;
         }
 
-        public void setWhere(SQLExpr where) {
-            this.where = where;
+        public void setWhere(SQLExpr x) {
+            if (x != null) {
+                x.setParent(this);
+            }
+            this.where = x;
         }
 
     }
+
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,14 @@ package com.alibaba.druid.sql.dialect.mysql.ast.expr;
 import com.alibaba.druid.sql.ast.SQLExpr;
 import com.alibaba.druid.sql.ast.SQLExprImpl;
 import com.alibaba.druid.sql.ast.SQLOrderingSpecification;
+import com.alibaba.druid.sql.ast.SQLReplaceable;
 import com.alibaba.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
-public class MySqlOrderingExpr extends SQLExprImpl implements MySqlExpr {
+import java.util.Collections;
+import java.util.List;
+
+public class MySqlOrderingExpr extends SQLExprImpl implements MySqlExpr, SQLReplaceable {
 
     protected SQLExpr                  expr;
     protected SQLOrderingSpecification type;
@@ -32,18 +36,44 @@ public class MySqlOrderingExpr extends SQLExprImpl implements MySqlExpr {
     
     public MySqlOrderingExpr(SQLExpr expr, SQLOrderingSpecification type){
         super();
-        this.expr = expr;
+        setExpr(expr);
         this.type = type;
+    }
+
+    public MySqlOrderingExpr clone() {
+        MySqlOrderingExpr x = new MySqlOrderingExpr();
+        if (expr != null) {
+            x.setExpr(expr.clone());
+        }
+        x.type = type;
+        return x;
+    }
+
+    @Override
+    public boolean replace(SQLExpr expr, SQLExpr target) {
+        if (this.expr == expr) {
+            setExpr(target);
+            return true;
+        }
+
+        return false;
     }
 
     @Override
     protected void accept0(SQLASTVisitor visitor) {
         MySqlASTVisitor mysqlVisitor = (MySqlASTVisitor) visitor;
         if (mysqlVisitor.visit(this)) {
-            acceptChild(visitor, this.expr);
+            if (expr != null) {
+                expr.accept(visitor);
+            }
         }
 
         mysqlVisitor.endVisit(this);
+    }
+
+    @Override
+    public List getChildren() {
+        return Collections.singletonList(this.expr);
     }
 
     public SQLExpr getExpr() {
@@ -51,7 +81,9 @@ public class MySqlOrderingExpr extends SQLExprImpl implements MySqlExpr {
     }
 
     public void setExpr(SQLExpr expr) {
-        expr.setParent(this);
+        if (expr != null) {
+            expr.setParent(this);
+        }
         this.expr = expr;
     }
 

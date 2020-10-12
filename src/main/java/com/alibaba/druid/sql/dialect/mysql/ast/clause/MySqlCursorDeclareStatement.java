@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,12 @@
  */
 package com.alibaba.druid.sql.dialect.mysql.ast.clause;
 
-import com.alibaba.druid.sql.ast.statement.SQLSelectStatement;
+import com.alibaba.druid.sql.ast.SQLName;
+import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.druid.sql.ast.statement.SQLSelect;
 import com.alibaba.druid.sql.dialect.mysql.ast.statement.MySqlStatementImpl;
 import com.alibaba.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
+
 /**
  * 
  * @author zz [455910092@qq.com]
@@ -25,29 +28,38 @@ import com.alibaba.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 public class MySqlCursorDeclareStatement extends MySqlStatementImpl{
 	
 	//cursor name
-	private String cursorName; 
+	private SQLName cursorName;
 	//select statement
-	private SQLSelectStatement select;
+	private SQLSelect select;
 	
-	public String getCursorName() {
+	public SQLName getCursorName() {
 		return cursorName;
 	}
 	
-	public void setCursorName(String cursorName) {
+	public void setCursorName(SQLName cursorName) {
+		if (cursorName != null) {
+			cursorName.setParent(this);
+		}
 		this.cursorName = cursorName;
 	}
 
-	public SQLSelectStatement getSelect() {
+	public void setCursorName(String cursorName) {
+		this.setCursorName(new SQLIdentifierExpr(cursorName));
+	}
+
+	public SQLSelect getSelect() {
 		return select;
 	}
 
-	public void setSelect(SQLSelectStatement select) {
+	public void setSelect(SQLSelect select) {
+		if (select != null) {
+			select.setParent(this);
+		}
 		this.select = select;
 	}
 
 	@Override
 	public void accept0(MySqlASTVisitor visitor) {
-		// TODO Auto-generated method stub
 		 if (visitor.visit(this)) {
 	         acceptChild(visitor, select);
 	        }

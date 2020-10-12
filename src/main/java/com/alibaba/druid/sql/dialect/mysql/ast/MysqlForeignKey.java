@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.alibaba.druid.sql.dialect.mysql.ast;
 
+import com.alibaba.druid.DbType;
 import com.alibaba.druid.sql.ast.SQLName;
 import com.alibaba.druid.sql.ast.statement.SQLForeignKeyImpl;
 import com.alibaba.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
@@ -24,15 +25,15 @@ import com.alibaba.druid.sql.visitor.SQLASTVisitor;
  * @author kiki
  */
 public class MysqlForeignKey extends SQLForeignKeyImpl {
-
     private SQLName  indexName;
-
     private boolean  hasConstraint;
-
     private Match    referenceMatch;
-
     protected Option onUpdate;
     protected Option onDelete;
+
+    public MysqlForeignKey() {
+        dbType = DbType.oracle;
+    }
 
     public SQLName getIndexName() {
         return indexName;
@@ -69,6 +70,21 @@ public class MysqlForeignKey extends SQLForeignKeyImpl {
         visitor.endVisit(this);
     }
 
+    public MysqlForeignKey clone() {
+        MysqlForeignKey x = new MysqlForeignKey();
+        cloneTo(x);
+
+        if (indexName != null) {
+            x.setIndexName(indexName.clone());
+        }
+
+        x.referenceMatch = referenceMatch;
+        x.onUpdate = onUpdate;
+        x.onDelete = onDelete;
+
+        return x;
+    }
+
     public Match getReferenceMatch() {
         return referenceMatch;
     }
@@ -93,46 +109,4 @@ public class MysqlForeignKey extends SQLForeignKeyImpl {
         this.onDelete = onDelete;
     }
 
-    public static enum Option {
-
-                               RESTRICT("RESTRICT"), CASCADE("CASCADE"), SET_NULL("SET NULL"), NO_ACTION("NO ACTION");
-
-        public final String name;
-        public final String name_lcase;
-
-        Option(String name){
-            this.name = name;
-            this.name_lcase = name.toLowerCase();
-        }
-
-        public String getText() {
-            return name;
-        }
-
-    }
-
-    public static enum Match {
-                              FULL("FULL"), PARTIAL("PARTIAL"), SIMPLE("SIMPLE");
-
-        public final String name;
-        public final String name_lcase;
-
-        Match(String name){
-            this.name = name;
-            this.name_lcase = name.toLowerCase();
-        }
-    }
-
-    public static enum On {
-                           DELETE("DELETE"), //
-                           UPDATE("UPDATE");
-
-        public final String name;
-        public final String name_lcase;
-
-        On(String name){
-            this.name = name;
-            this.name_lcase = name.toLowerCase();
-        }
-    }
 }

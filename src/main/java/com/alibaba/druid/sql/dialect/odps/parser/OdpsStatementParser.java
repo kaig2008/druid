@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,50 +15,30 @@
  */
 package com.alibaba.druid.sql.dialect.odps.parser;
 
+import com.alibaba.druid.DbType;
+import com.alibaba.druid.sql.ast.*;
+import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.druid.sql.ast.statement.*;
+import com.alibaba.druid.sql.dialect.hive.ast.HiveInsert;
+import com.alibaba.druid.sql.dialect.hive.ast.HiveMultiInsertStatement;
+import com.alibaba.druid.sql.dialect.hive.stmt.HiveLoadDataStatement;
+import com.alibaba.druid.sql.dialect.mysql.ast.statement.MySqlKillStatement;
+import com.alibaba.druid.sql.dialect.odps.ast.*;
+import com.alibaba.druid.sql.parser.*;
+import com.alibaba.druid.util.FnvHash;
+
 import java.util.List;
 
-import com.alibaba.druid.sql.ast.SQLExpr;
-import com.alibaba.druid.sql.ast.SQLName;
-import com.alibaba.druid.sql.ast.SQLObject;
-import com.alibaba.druid.sql.ast.SQLStatement;
-import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
-import com.alibaba.druid.sql.ast.statement.SQLAssignItem;
-import com.alibaba.druid.sql.ast.statement.SQLCreateTableStatement;
-import com.alibaba.druid.sql.ast.statement.SQLExprTableSource;
-import com.alibaba.druid.sql.ast.statement.SQLObjectType;
-import com.alibaba.druid.sql.ast.statement.SQLSelect;
-import com.alibaba.druid.sql.ast.statement.SQLSelectStatement;
-import com.alibaba.druid.sql.ast.statement.SQLSetStatement;
-import com.alibaba.druid.sql.ast.statement.SQLShowTablesStatement;
-import com.alibaba.druid.sql.ast.statement.SQLSubqueryTableSource;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsAddStatisticStatement;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsAnalyzeTableStatement;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsDescStmt;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsGrantStmt;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsInsert;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsInsertStatement;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsListStmt;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsReadStatement;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsRemoveStatisticStatement;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsSetLabelStatement;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsShowGrantsStmt;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsShowPartitionsStmt;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsShowStatisticStmt;
-import com.alibaba.druid.sql.dialect.odps.ast.OdpsStatisticClause;
-import com.alibaba.druid.sql.parser.ParserException;
-import com.alibaba.druid.sql.parser.SQLCreateTableParser;
-import com.alibaba.druid.sql.parser.SQLExprParser;
-import com.alibaba.druid.sql.parser.SQLSelectParser;
-import com.alibaba.druid.sql.parser.SQLStatementParser;
-import com.alibaba.druid.sql.parser.Token;
-import com.alibaba.druid.util.JdbcConstants;
+import static com.alibaba.druid.sql.parser.Token.OVERWRITE;
 
 public class OdpsStatementParser extends SQLStatementParser {
 
     public OdpsStatementParser(String sql){
-        super(new OdpsLexer(sql, true, true), JdbcConstants.ODPS);
-        this.exprParser = new OdpsExprParser(this.lexer);
-        this.lexer.nextToken();
+        super(new OdpsExprParser(sql));
+    }
+
+    public OdpsStatementParser(String sql, SQLParserFeature ... features){
+        super(new OdpsExprParser(sql, features));
     }
 
     public OdpsStatementParser(SQLExprParser exprParser){
@@ -66,13 +46,22 @@ public class OdpsStatementParser extends SQLStatementParser {
     }
 
     public SQLSelectStatement parseSelect() {
-        OdpsSelectParser selectParser = new OdpsSelectParser(this.exprParser);
-        return new SQLSelectStatement(selectParser.select(), JdbcConstants.ODPS);
+        SQLSelect select =  new OdpsSelectParser(this.exprParser)
+                .select();
+
+        if (select.getWithSubQuery() == null && select.getQuery() instanceof SQLSelectQueryBlock) {
+            SQLSelectQueryBlock queryBlock = (SQLSelectQueryBlock) select.getQuery();
+            if (queryBlock.getFrom() == null && queryBlock.getWhere() != null) {
+                throw new ParserException("none from query not support where clause.");
+            }
+        }
+
+        return new SQLSelectStatement(select, DbType.odps);
     }
 
     public SQLCreateTableStatement parseCreateTable() {
         SQLCreateTableParser parser = new OdpsCreateTableParser(this.exprParser);
-        return parser.parseCrateTable();
+        return parser.parseCreateTable();
     }
 
     public SQLCreateTableParser getSQLCreateTableParser() {
@@ -86,34 +75,18 @@ public class OdpsStatementParser extends SQLStatementParser {
             return true;
         }
 
-        if (identifierEquals("ANALYZE")) {
-            lexer.nextToken();
-            accept(Token.TABLE);
-
-            OdpsAnalyzeTableStatement stmt = new OdpsAnalyzeTableStatement();
-
-            SQLName table = this.exprParser.name();
-            stmt.setTable(table);
-
-            if (lexer.token() == Token.PARTITION) {
-                lexer.nextToken();
-
-                accept(Token.LPAREN);
-                parseAssignItems(stmt.getPartition(), stmt);
-                accept(Token.RPAREN);
-            }
-
-            accept(Token.COMPUTE);
-            acceptIdentifier("STATISTICS");
-
+        if (lexer.identifierEquals("ANALYZE")) {
+            SQLStatement stmt = parseAnalyze();
             statementList.add(stmt);
             return true;
         }
 
-        if (identifierEquals("ADD")) {
+
+
+        if (lexer.identifierEquals("ADD")) {
             lexer.nextToken();
 
-            if (identifierEquals("STATISTIC")) {
+            if (lexer.identifierEquals("STATISTIC")) {
                 lexer.nextToken();
                 OdpsAddStatisticStatement stmt = new OdpsAddStatisticStatement();
                 stmt.setTable(this.exprParser.name());
@@ -122,13 +95,94 @@ public class OdpsStatementParser extends SQLStatementParser {
                 return true;
             }
 
-            throw new ParserException("TODO " + lexer.token() + " " + lexer.stringVal());
+            if (lexer.token() == Token.USER) {
+                lexer.nextToken();
+                OdpsAddUserStatement stmt = new OdpsAddUserStatement();
+                stmt.setUser(this.exprParser.name());
+                statementList.add(stmt);
+                return true;
+            }
+
+            if (lexer.token() == Token.TABLE) {
+                lexer.nextToken();
+                OdpsAddTableStatement stmt = new OdpsAddTableStatement();
+                stmt.setTable(this.exprParser.name());
+
+                if (lexer.token() == Token.PARTITION) {
+                    lexer.nextToken();
+                    this.exprParser.parseAssignItem(stmt.getPartitoins(), stmt);
+                }
+
+                if (lexer.token() == Token.AS) {
+                    lexer.nextToken();
+                    SQLName name = this.exprParser.name();
+                    stmt.getTable().setAlias(name.toString());
+                }
+
+                if (lexer.token() == Token.COMMENT) {
+                    lexer.nextToken();
+                    stmt.setComment(this.exprParser.primary());
+                }
+
+                if (lexer.token() == Token.SUB) {
+                    lexer.nextToken();
+                    acceptIdentifier("f");
+                    stmt.setForce(true);
+                }
+                statementList.add(stmt);
+                return true;
+            }
+
+            if (lexer.identifierEquals(FnvHash.Constants.FILE)
+                    || lexer.identifierEquals(FnvHash.Constants.JAR)
+                    || lexer.identifierEquals(FnvHash.Constants.PY)
+                    || lexer.identifierEquals(FnvHash.Constants.ARCHIVE)) {
+                OdpsAddFileStatement stmt = new OdpsAddFileStatement();
+
+                long hash = lexer.hash_lower();
+                if (hash == FnvHash.Constants.JAR) {
+                    stmt.setType(OdpsAddFileStatement.FileType.JAR);
+                } else if (hash == FnvHash.Constants.PY) {
+                    stmt.setType(OdpsAddFileStatement.FileType.PY);
+                } else if (hash == FnvHash.Constants.ARCHIVE) {
+                    stmt.setType(OdpsAddFileStatement.FileType.ARCHIVE);
+                }
+
+                lexer.nextPath();
+                String path = lexer.stringVal();
+
+                lexer.nextToken();
+
+
+                stmt.setFile(path);
+
+                if (lexer.token() == Token.AS) {
+                    lexer.nextToken();
+                    SQLName name = this.exprParser.name();
+                    stmt.setAlias(name.toString());
+                }
+
+                if (lexer.token() == Token.COMMENT) {
+                    lexer.nextToken();
+                    stmt.setComment(this.exprParser.primary());
+                }
+
+                if (lexer.token() == Token.SUB) {
+                    lexer.nextToken();
+                    acceptIdentifier("f");
+                    stmt.setForce(true);
+                }
+                statementList.add(stmt);
+                return true;
+            }
+
+            throw new ParserException("TODO " + lexer.info());
         }
 
-        if (identifierEquals("REMOVE")) {
+        if (lexer.identifierEquals("REMOVE")) {
             lexer.nextToken();
 
-            if (identifierEquals("STATISTIC")) {
+            if (lexer.identifierEquals("STATISTIC")) {
                 lexer.nextToken();
                 OdpsRemoveStatisticStatement stmt = new OdpsRemoveStatisticStatement();
                 stmt.setTable(this.exprParser.name());
@@ -137,12 +191,25 @@ public class OdpsStatementParser extends SQLStatementParser {
                 return true;
             }
 
-            throw new ParserException("TODO " + lexer.token() + " " + lexer.stringVal());
+            if (lexer.token() == Token.USER) {
+                lexer.nextToken();
+                OdpsRemoveUserStatement stmt = new OdpsRemoveUserStatement();
+                stmt.setUser((SQLIdentifierExpr)this.exprParser.name());
+                statementList.add(stmt);
+                return true;
+            }
+
+            throw new ParserException("TODO " + lexer.info());
         }
 
-        if (identifierEquals("READ")) {
-            lexer.nextToken();
+        if (lexer.identifierEquals("READ")) {
             OdpsReadStatement stmt = new OdpsReadStatement();
+
+            if (lexer.hasComment() && lexer.isKeepComments()) {
+                stmt.addBeforeComment(lexer.readAndResetComments());
+            }
+            lexer.nextToken();
+
             stmt.setTable(this.exprParser.name());
 
             if (lexer.token() == Token.LPAREN) {
@@ -167,7 +234,7 @@ public class OdpsStatementParser extends SQLStatementParser {
             return true;
         }
 
-        if (identifierEquals("LIST")) {
+        if (lexer.identifierEquals("LIST")) {
             OdpsListStmt stmt = new OdpsListStmt();
 
             lexer.nextToken();
@@ -178,136 +245,267 @@ public class OdpsStatementParser extends SQLStatementParser {
             return true;
         }
 
-        if (lexer.token() == Token.DESC || identifierEquals("DESCRIBE")) {
-            OdpsDescStmt stmt = parseDescribe();
+        if (lexer.token() == Token.DESC || lexer.identifierEquals("DESCRIBE")) {
+            SQLStatement stmt = parseDescribe();
             statementList.add(stmt);
             return true;
+        }
+
+        if (lexer.identifierEquals("WHOAMI")) {
+            lexer.nextToken();
+            SQLWhoamiStatement stmt = new SQLWhoamiStatement();
+            statementList.add(stmt);
+            return true;
+        }
+
+        if (lexer.identifierEquals("COUNT")) {
+            lexer.nextToken();
+            OdpsCountStatement stmt = new OdpsCountStatement();
+            stmt.setTable(this.exprParser.name());
+
+            if (lexer.token() == Token.PARTITION) {
+                lexer.nextToken();
+                this.exprParser.parseAssignItem(stmt.getPartitoins(), stmt);
+            }
+            statementList.add(stmt);
+            return true;
+        }
+
+        if (lexer.identifierEquals("MSCK")) {
+            SQLStatement stmt = parseMsck();
+            statementList.add(stmt);
+            return true;
+        }
+
+        if (lexer.identifierEquals("EXSTORE")) {
+            lexer.nextToken();
+            OdpsExstoreStatement stmt = new OdpsExstoreStatement();
+            SQLExpr table = this.exprParser.expr();
+            stmt.setTable(new SQLExprTableSource(table));
+            accept(Token.PARTITION);
+            accept(Token.LPAREN);
+            this.exprParser.exprList(stmt.getPartitions(), stmt);
+            accept(Token.RPAREN);
+            statementList.add(stmt);
+            return true;
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.KILL)) {
+            SQLStatement stmt = parseKill();
+            statementList.add(stmt);
+            return true;
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.LOAD)) {
+            HiveLoadDataStatement stmt = parseLoad();
+
+            statementList.add(stmt);
+            return true;
+        }
+
+        if (lexer.token() == Token.VARIANT && lexer.stringVal().startsWith("@")) {
+            Lexer.SavePoint mark = lexer.mark();
+            String variant = lexer.stringVal();
+            lexer.nextToken();
+            accept(Token.COLONEQ);
+
+            switch (lexer.token()) {
+                case LITERAL_INT:
+                case LITERAL_FLOAT:
+                case LITERAL_CHARS:
+                case CASE: {
+                    SQLExpr expr = this.exprParser.expr();
+                    SQLExprStatement stmt = new SQLExprStatement(
+                            new SQLAssignItem(new SQLIdentifierExpr(variant), expr)
+                    );
+                    statementList.add(stmt);
+                    return true;
+                }
+                default:
+                    SQLSelectStatement stmt = this.parseSelect();
+
+                    OdpsQueryAliasStatement aliasQueryStatement = new OdpsQueryAliasStatement(variant, stmt);
+                    statementList.add(aliasQueryStatement);
+                    return true;
+            }
         }
 
         return false;
     }
 
+    public SQLStatement parseKill() {
+        acceptIdentifier("KILL");
+        MySqlKillStatement stmt = new MySqlKillStatement();
+        SQLExpr instanceId = this.exprParser.primary();
+        stmt.setThreadId(instanceId);
+        return stmt;
+    }
+
     protected OdpsStatisticClause parseStaticClause() {
-        if (identifierEquals("TABLE_COUNT")) {
+        if (lexer.identifierEquals("TABLE_COUNT")) {
             lexer.nextToken();
             return new OdpsStatisticClause.TableCount();
-        } else if (identifierEquals("NULL_VALUE")) {
+        } else if (lexer.identifierEquals("NULL_VALUE")) {
             lexer.nextToken();
             OdpsStatisticClause.NullValue null_value = new OdpsStatisticClause.NullValue();
             null_value.setColumn(this.exprParser.name());
             return null_value;
-        } else if (identifierEquals("COLUMN_SUM")) {
+        } else if (lexer.identifierEquals("DISTINCT_VALUE")) {
+            lexer.nextToken();
+            OdpsStatisticClause.DistinctValue distinctValue = new OdpsStatisticClause.DistinctValue();
+            distinctValue.setColumn(this.exprParser.name());
+            return distinctValue;
+        } else if (lexer.identifierEquals("COLUMN_SUM")) {
             lexer.nextToken();
             OdpsStatisticClause.ColumnSum column_sum = new OdpsStatisticClause.ColumnSum();
             column_sum.setColumn(this.exprParser.name());
             return column_sum;
-        } else if (identifierEquals("COLUMN_MAX")) {
+        } else if (lexer.identifierEquals("COLUMN_MAX")) {
             lexer.nextToken();
             OdpsStatisticClause.ColumnMax column_max = new OdpsStatisticClause.ColumnMax();
             column_max.setColumn(this.exprParser.name());
             return column_max;
-        } else if (identifierEquals("COLUMN_MIN")) {
+        } else if (lexer.identifierEquals("COLUMN_MIN")) {
             lexer.nextToken();
             OdpsStatisticClause.ColumnMin column_min = new OdpsStatisticClause.ColumnMin();
             column_min.setColumn(this.exprParser.name());
             return column_min;
-        } else if (identifierEquals("EXPRESSION_CONDITION")) {
+        } else if (lexer.identifierEquals("EXPRESSION_CONDITION")) {
             lexer.nextToken();
             OdpsStatisticClause.ExpressionCondition expr_condition = new OdpsStatisticClause.ExpressionCondition();
             expr_condition.setExpr(this.exprParser.expr());
             return expr_condition;
         } else {
-            throw new ParserException("TODO " + lexer.token() + " " + lexer.stringVal());
+            throw new ParserException("TODO " + lexer.info());
         }
     }
 
     public SQLStatement parseInsert() {
-        OdpsInsertStatement stmt = new OdpsInsertStatement();
-
         if (lexer.token() == Token.FROM) {
             lexer.nextToken();
-            accept(Token.LPAREN);
 
-            SQLSelectParser selectParser = createSQLSelectParser();
-            SQLSelect select = selectParser.select();
+            HiveMultiInsertStatement stmt = new HiveMultiInsertStatement();
 
-            accept(Token.RPAREN);
+            if (lexer.token() == Token.IDENTIFIER) {
+                SQLName tableName = this.exprParser.name();
+                SQLTableSource from = new SQLExprTableSource(tableName);
 
-            String alias = lexer.stringVal();
-            accept(Token.IDENTIFIER);
+                if (lexer.token() == Token.IDENTIFIER) {
+                    String alias = alias();
+                    from.setAlias(alias);
+                }
 
-            SQLSubqueryTableSource from = new SQLSubqueryTableSource(select, alias);
+                SQLSelectParser selectParser = createSQLSelectParser();
+                from = selectParser.parseTableSourceRest(from);
 
-            stmt.setFrom(from);
-        }
+                stmt.setFrom(from);
+            } else {
+                SQLCommentHint hint = null;
+                if (lexer.token() == Token.HINT) {
+                    hint = this.exprParser.parseHint();
+                }
+                accept(Token.LPAREN);
 
-        for (;;) {
-            OdpsInsert insert = parseOdpsInsert();
-            stmt.addItem(insert);
+                SQLSelectParser selectParser = createSQLSelectParser();
+                SQLSelect select = selectParser.select();
 
-            if (lexer.token() != Token.INSERT) {
-                break;
+                accept(Token.RPAREN);
+
+                String alias;
+
+                if (lexer.token() == Token.INSERT) {
+                    alias = null;
+                } else {
+                    if (lexer.token() == Token.AS) {
+                        lexer.nextToken();
+                    }
+                    alias = lexer.stringVal();
+                    accept(Token.IDENTIFIER);
+                }
+
+                SQLSubqueryTableSource from = new SQLSubqueryTableSource(select, alias);
+
+                SQLTableSource tableSource = selectParser.parseTableSourceRest(from);
+
+                if (hint != null) {
+                    if (tableSource instanceof SQLJoinTableSource) {
+                        ((SQLJoinTableSource) tableSource).setHint(hint);
+                    }
+                }
+
+                stmt.setFrom(tableSource);
             }
+
+            for (;;) {
+                HiveInsert insert = parseHiveInsert();
+                stmt.addItem(insert);
+
+                if (lexer.token() != Token.INSERT) {
+                    break;
+                }
+            }
+
+            return stmt;
         }
 
-        return stmt;
+        return parseHiveInsertStmt();
     }
 
-    public OdpsInsert parseOdpsInsert() {
-        OdpsInsert insert = new OdpsInsert();
-
-        if (lexer.isKeepComments() && lexer.hasComment()) {
-            insert.addBeforeComment(lexer.readAndResetComments());
-        }
-
-        SQLSelectParser selectParser = createSQLSelectParser();
-
-        accept(Token.INSERT);
-
-        if (lexer.token() == Token.INTO) {
-            lexer.nextToken();
-        } else {
-            accept(Token.OVERWRITE);
-            insert.setOverwrite(true);
-        }
-
-        accept(Token.TABLE);
-        insert.setTableSource(this.exprParser.name());
-
-        if (lexer.token() == Token.PARTITION) {
-            lexer.nextToken();
-            accept(Token.LPAREN);
-            for (;;) {
-                SQLAssignItem ptExpr = new SQLAssignItem();
-                ptExpr.setTarget(this.exprParser.name());
-                if (lexer.token() == Token.EQ) {
-                    lexer.nextToken();
-                    SQLExpr ptValue = this.exprParser.expr();
-                    ptExpr.setValue(ptValue);
-                }
-                insert.addPartition(ptExpr);
-                if (!(lexer.token() == (Token.COMMA))) {
-                    break;
-                } else {
-                    lexer.nextToken();
-                }
-            }
-            accept(Token.RPAREN);
-        }
-
-        SQLSelect query = selectParser.select();
-        insert.setQuery(query);
-
-        return insert;
+    public SQLSelectParser createSQLSelectParser() {
+        return new OdpsSelectParser(this.exprParser, selectListCache);
     }
 
     public SQLStatement parseShow() {
         accept(Token.SHOW);
 
-        if (identifierEquals("PARTITIONS")) {
+        if (lexer.identifierEquals(FnvHash.Constants.PARTITIONS)) {
             lexer.nextToken();
 
-            OdpsShowPartitionsStmt stmt = new OdpsShowPartitionsStmt();
+            SQLShowPartitionsStmt stmt = new SQLShowPartitionsStmt();
+
+            SQLExpr expr = this.exprParser.expr();
+            stmt.setTableSource(new SQLExprTableSource(expr));
+
+            if (lexer.token() == Token.PARTITION) {
+                lexer.nextToken();
+                accept(Token.LPAREN);
+                parseAssignItems(stmt.getPartition(), stmt, false);
+                accept(Token.RPAREN);
+            }
+
+            if (lexer.token() == Token.WHERE) {
+                lexer.nextToken();
+                stmt.setWhere(
+                        this.exprParser.expr()
+                );
+            }
+
+            return stmt;
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.STATISTIC)) {
+            lexer.nextToken();
+
+            SQLShowStatisticStmt stmt = new SQLShowStatisticStmt();
+
+            SQLExpr expr = this.exprParser.expr();
+            stmt.setTableSource(new SQLExprTableSource(expr));
+
+            if (lexer.token() == Token.PARTITION) {
+                lexer.nextToken();
+
+                accept(Token.LPAREN);
+                parseAssignItems(stmt.getPartitions(), stmt, false);
+                accept(Token.RPAREN);
+            }
+
+            return stmt;
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.STATISTIC_LIST)) {
+            lexer.nextToken();
+
+            SQLShowStatisticListStmt stmt = new SQLShowStatisticListStmt();
 
             SQLExpr expr = this.exprParser.expr();
             stmt.setTableSource(new SQLExprTableSource(expr));
@@ -315,18 +513,15 @@ public class OdpsStatementParser extends SQLStatementParser {
             return stmt;
         }
 
-        if (identifierEquals("STATISTIC")) {
+
+        if (lexer.identifierEquals(FnvHash.Constants.PACKAGES)) {
             lexer.nextToken();
 
-            OdpsShowStatisticStmt stmt = new OdpsShowStatisticStmt();
-
-            SQLExpr expr = this.exprParser.expr();
-            stmt.setTableSource(new SQLExprTableSource(expr));
-
+            SQLShowPackagesStatement stmt = new SQLShowPackagesStatement();
             return stmt;
         }
 
-        if (identifierEquals("TABLES")) {
+        if (lexer.identifierEquals(FnvHash.Constants.TABLES)) {
             lexer.nextToken();
 
             SQLShowTablesStatement stmt = new SQLShowTablesStatement();
@@ -344,12 +539,36 @@ public class OdpsStatementParser extends SQLStatementParser {
             return stmt;
         }
 
-        if (identifierEquals("GRANTS")) {
+        if (lexer.identifierEquals(FnvHash.Constants.LABEL)) {
+            lexer.nextToken();
+            acceptIdentifier("GRANTS");
+            OdpsShowGrantsStmt stmt = new OdpsShowGrantsStmt();
+            stmt.setLabel(true);
+
+            if (lexer.token() == Token.ON) {
+                lexer.nextToken();
+                accept(Token.TABLE);
+                stmt.setObjectType(this.exprParser.expr());
+            }
+
+            if (lexer.token() == Token.FOR) {
+                lexer.nextToken();
+                accept(Token.USER);
+                stmt.setUser(this.exprParser.expr());
+            }
+
+            return stmt;
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.GRANTS)) {
             lexer.nextToken();
             OdpsShowGrantsStmt stmt = new OdpsShowGrantsStmt();
 
             if (lexer.token() == Token.FOR) {
                 lexer.nextToken();
+                if (lexer.token() == Token.USER) {
+                    lexer.nextToken();
+                }
                 stmt.setUser(this.exprParser.expr());
             }
 
@@ -362,7 +581,17 @@ public class OdpsStatementParser extends SQLStatementParser {
             return stmt;
         }
 
-        throw new ParserException("TODO " + lexer.token() + " " + lexer.stringVal());
+        if (lexer.identifierEquals(FnvHash.Constants.USERS)) {
+            lexer.nextToken();
+            SQLShowUsersStatement stmt = new SQLShowUsersStatement();
+            return stmt;
+        }
+
+        if (lexer.token() == Token.CREATE) {
+            return parseShowCreateTable();
+        }
+
+        throw new ParserException("TODO " + lexer.info());
     }
 
     public SQLStatement parseSet() {
@@ -373,7 +602,7 @@ public class OdpsStatementParser extends SQLStatementParser {
 
         accept(Token.SET);
 
-        if (identifierEquals("LABEL")) {
+        if (lexer.identifierEquals("LABEL")) {
             OdpsSetLabelStatement stmt = new OdpsSetLabelStatement();
 
             if (comments != null) {
@@ -404,7 +633,8 @@ public class OdpsStatementParser extends SQLStatementParser {
 
             return stmt;
         } else {
-            SQLSetStatement stmt = new SQLSetStatement(getDbType());
+            SQLSetStatement stmt = new SQLSetStatement(dbType);
+            stmt.putAttribute("parser.set", Boolean.TRUE);
 
             if (comments != null) {
                 stmt.addBeforeComment(comments);
@@ -420,12 +650,12 @@ public class OdpsStatementParser extends SQLStatementParser {
         accept(Token.GRANT);
         OdpsGrantStmt stmt = new OdpsGrantStmt();
 
-        if (identifierEquals("LABEL")) {
+        if (lexer.identifierEquals("LABEL")) {
             stmt.setLabel(true);
             lexer.nextToken();
             stmt.setLabel(this.exprParser.expr());
         } else {
-            if (identifierEquals("SUPER")) {
+            if (lexer.identifierEquals("SUPER")) {
                 stmt.setSuper(true);
                 lexer.nextToken();
             }
@@ -436,44 +666,44 @@ public class OdpsStatementParser extends SQLStatementParser {
         if (lexer.token() == Token.ON) {
             lexer.nextToken();
 
-            if (identifierEquals("PROJECT")) {
+            if (lexer.identifierEquals("PROJECT")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.PROJECT);
-            } else if (identifierEquals("PACKAGE")) {
+                stmt.setResourceType(SQLObjectType.PROJECT);
+            } else if (lexer.identifierEquals("PACKAGE")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.PACKAGE);
+                stmt.setResourceType(SQLObjectType.PACKAGE);
             } else if (lexer.token() == Token.FUNCTION) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.FUNCTION);
+                stmt.setResourceType(SQLObjectType.FUNCTION);
             } else if (lexer.token() == Token.TABLE) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.TABLE);
+                stmt.setResourceType(SQLObjectType.TABLE);
                 if (lexer.token() == Token.LPAREN) {
                     lexer.nextToken();
                     this.exprParser.names(stmt.getColumns(), stmt);
                     accept(Token.RPAREN);
                 }
-            } else if (identifierEquals("RESOURCE")) {
+            } else if (lexer.identifierEquals("RESOURCE")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.RESOURCE);
-            } else if (identifierEquals("INSTANCE")) {
+                stmt.setResourceType(SQLObjectType.RESOURCE);
+            } else if (lexer.identifierEquals("INSTANCE")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.INSTANCE);
-            } else if (identifierEquals("JOB")) {
+                stmt.setResourceType(SQLObjectType.INSTANCE);
+            } else if (lexer.identifierEquals("JOB")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.JOB);
-            } else if (identifierEquals("VOLUME")) {
+                stmt.setResourceType(SQLObjectType.JOB);
+            } else if (lexer.identifierEquals("VOLUME")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.VOLUME);
-            } else if (identifierEquals("OfflineModel")) {
+                stmt.setResourceType(SQLObjectType.VOLUME);
+            } else if (lexer.identifierEquals("OfflineModel")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.OfflineModel);
-            } else if (identifierEquals("XFLOW")) {
+                stmt.setResourceType(SQLObjectType.OfflineModel);
+            } else if (lexer.identifierEquals("XFLOW")) {
                 lexer.nextToken();
-                stmt.setObjectType(SQLObjectType.XFLOW);
+                stmt.setResourceType(SQLObjectType.XFLOW);
             }
 
-            stmt.setOn(this.exprParser.expr());
+            stmt.setResource(this.exprParser.expr());
         }
 
         if (lexer.token() == Token.TO) {
@@ -481,11 +711,11 @@ public class OdpsStatementParser extends SQLStatementParser {
             if (lexer.token() == Token.USER) {
                 lexer.nextToken();
                 stmt.setSubjectType(SQLObjectType.USER);
-            } else if (identifierEquals("ROLE")) {
+            } else if (lexer.identifierEquals("ROLE")) {
                 lexer.nextToken();
                 stmt.setSubjectType(SQLObjectType.ROLE);
             }
-            stmt.setTo(this.exprParser.expr());
+            stmt.getUsers().add(this.exprParser.expr());
         }
 
         if (lexer.token() == Token.WITH) {
@@ -497,7 +727,7 @@ public class OdpsStatementParser extends SQLStatementParser {
         return stmt;
     }
 
-    protected void parsePrivileages(List<SQLExpr> privileges, SQLObject parent) {
+    protected void parsePrivileages(List<SQLPrivilegeItem> privileges, SQLObject parent) {
         for (;;) {
             String privilege = null;
             if (lexer.token() == Token.ALL) {
@@ -521,43 +751,43 @@ public class OdpsStatementParser extends SQLStatementParser {
             } else if (lexer.token() == Token.ALTER) {
                 lexer.nextToken();
                 privilege = "ALTER";
-            } else if (identifierEquals("DESCRIBE")) {
+            } else if (lexer.identifierEquals("DESCRIBE")) {
                 privilege = "DESCRIBE";
                 lexer.nextToken();
-            } else if (identifierEquals("READ")) {
+            } else if (lexer.identifierEquals("READ")) {
                 privilege = "READ";
                 lexer.nextToken();
-            } else if (identifierEquals("WRITE")) {
+            } else if (lexer.identifierEquals("WRITE")) {
                 privilege = "WRITE";
                 lexer.nextToken();
-            } else if (identifierEquals("EXECUTE")) {
+            } else if (lexer.identifierEquals("EXECUTE")) {
                 lexer.nextToken();
                 privilege = "EXECUTE";
-            } else if (identifierEquals("LIST")) {
+            } else if (lexer.identifierEquals("LIST")) {
                 lexer.nextToken();
                 privilege = "LIST";
-            } else if (identifierEquals("CreateTable")) {
+            } else if (lexer.identifierEquals("CreateTable")) {
                 lexer.nextToken();
                 privilege = "CreateTable";
-            } else if (identifierEquals("CreateInstance")) {
+            } else if (lexer.identifierEquals("CreateInstance")) {
                 lexer.nextToken();
                 privilege = "CreateInstance";
-            } else if (identifierEquals("CreateFunction")) {
+            } else if (lexer.identifierEquals("CreateFunction")) {
                 lexer.nextToken();
                 privilege = "CreateFunction";
-            } else if (identifierEquals("CreateResource")) {
+            } else if (lexer.identifierEquals("CreateResource")) {
                 lexer.nextToken();
                 privilege = "CreateResource";
-            } else if (identifierEquals("CreateJob")) {
+            } else if (lexer.identifierEquals("CreateJob")) {
                 lexer.nextToken();
                 privilege = "CreateJob";
-            } else if (identifierEquals("CreateVolume")) {
+            } else if (lexer.identifierEquals("CreateVolume")) {
                 lexer.nextToken();
                 privilege = "CreateVolume";
-            } else if (identifierEquals("CreateOfflineModel")) {
+            } else if (lexer.identifierEquals("CreateOfflineModel")) {
                 lexer.nextToken();
                 privilege = "CreateOfflineModel";
-            } else if (identifierEquals("CreateXflow")) {
+            } else if (lexer.identifierEquals("CreateXflow")) {
                 lexer.nextToken();
                 privilege = "CreateXflow";
             }
@@ -568,8 +798,26 @@ public class OdpsStatementParser extends SQLStatementParser {
             } else {
                 expr = this.exprParser.expr();
             }
+
+            SQLPrivilegeItem privilegeItem = new SQLPrivilegeItem();
+            privilegeItem.setAction(expr);
+
+            if (lexer.token() == Token.LPAREN) {
+                lexer.nextToken();
+                for (; ; ) {
+                    privilegeItem.getColumns().add(this.exprParser.name());
+
+                    if (lexer.token() == Token.COMMA) {
+                        lexer.nextToken();
+                        continue;
+                    }
+                    break;
+                }
+                accept(Token.RPAREN);
+            }
+
             expr.setParent(parent);
-            privileges.add(expr);
+            privileges.add(privilegeItem);
 
             if (lexer.token() == Token.COMMA) {
                 lexer.nextToken();
@@ -579,41 +827,92 @@ public class OdpsStatementParser extends SQLStatementParser {
         }
     }
 
-    public OdpsDescStmt parseDescribe() {
-        if (lexer.token() == Token.DESC || identifierEquals("DESCRIBE")) {
+    public SQLCreateFunctionStatement parseCreateFunction() {
+        return parseHiveCreateFunction();
+    }
+
+    protected HiveLoadDataStatement parseLoad() {
+        acceptIdentifier("LOAD");
+
+        HiveLoadDataStatement stmt = new HiveLoadDataStatement();
+
+        if (lexer.token() == OVERWRITE) {
+            stmt.setOverwrite(true);
             lexer.nextToken();
-        } else {
-            throw new ParserException("expect DESC, actual " + lexer.token());
         }
 
-        OdpsDescStmt stmt = new OdpsDescStmt();
-        if (identifierEquals("ROLE")) {
-            lexer.nextToken();
-            stmt.setObjectType(SQLObjectType.ROLE);
-        } else if (identifierEquals("PACKAGE")) {
-            lexer.nextToken();
-            stmt.setObjectType(SQLObjectType.PACKAGE);
-        } else if (identifierEquals("INSTANCE")) {
-            lexer.nextToken();
-            stmt.setObjectType(SQLObjectType.INSTANCE);
-        }
-        stmt.setObject(this.exprParser.name());
+        accept(Token.TABLE);
+
+        stmt.setInto(this.exprParser.expr());
 
         if (lexer.token() == Token.PARTITION) {
             lexer.nextToken();
-            this.accept(Token.LPAREN);
+            accept(Token.LPAREN);
+            this.exprParser.exprList(stmt.getPartition(), stmt);
+            accept(Token.RPAREN);
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.LOCAL)) {
+            lexer.nextToken();
+            stmt.setLocal(true);
+        }
+
+        accept(Token.FROM);
+
+        acceptIdentifier("LOCATION");
+
+        SQLExpr inpath = this.exprParser.expr();
+        stmt.setInpath(inpath);
+
+        if (lexer.identifierEquals("STORED")) {
+            lexer.nextToken();
+
+            if (lexer.token() == Token.BY) {
+                lexer.nextToken();
+                stmt.setStoredBy(this.exprParser.expr());
+            } else {
+                accept(Token.AS);
+                stmt.setStoredAs(this.exprParser.expr());
+            }
+        }
+
+        if (lexer.identifierEquals("ROW")) {
+            lexer.nextToken();
+
+            acceptIdentifier("FORMAT");
+            acceptIdentifier("SERDE");
+            stmt.setRowFormat(this.exprParser.expr());
+        }
+
+        if (lexer.token() == Token.WITH) {
+            lexer.nextToken();
+            acceptIdentifier("SERDEPROPERTIES");
+
+            accept(Token.LPAREN);
+
             for (;;) {
-                stmt.getPartition().add(this.exprParser.expr());
+                String name = lexer.stringVal();
+                lexer.nextToken();
+                accept(Token.EQ);
+                SQLExpr value = this.exprParser.primary();
+                stmt.getSerdeProperties().put(name, value);
                 if (lexer.token() == Token.COMMA) {
                     lexer.nextToken();
                     continue;
                 }
-                if (lexer.token() == Token.RPAREN) {
-                    lexer.nextToken();
-                    break;
-                }
+                break;
             }
+
+            accept(Token.RPAREN);
         }
+
+        if (lexer.identifierEquals("STORED")) {
+            lexer.nextToken();
+
+            accept(Token.AS);
+            stmt.setStoredAs(this.exprParser.expr());
+        }
+
         return stmt;
     }
 }

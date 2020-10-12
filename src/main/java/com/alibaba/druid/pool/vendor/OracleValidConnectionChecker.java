@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,7 +53,7 @@ public class OracleValidConnectionChecker extends ValidConnectionCheckerAdapter 
         this.timeout = seconds;
     }
 
-    public boolean validConnection(Connection conn, String validateQuery, int validationQueryTimeout) throws Exception {
+    public boolean isValidConnection(Connection conn, String validateQuery, int validationQueryTimeout) throws Exception {
         if (validateQuery == null || validateQuery.isEmpty()) {
             validateQuery = this.defaultValidateQuery;
         }
@@ -70,11 +70,17 @@ public class OracleValidConnectionChecker extends ValidConnectionCheckerAdapter 
             conn = ((ConnectionProxy) conn).getRawObject();
         }
 
+        if (validateQuery == null || validateQuery.isEmpty()) {
+            return true;
+        }
+
+        int queryTimeout = validationQueryTimeout <= 0 ? timeout : validationQueryTimeout;
+
         Statement stmt = null;
         ResultSet rs = null;
         try {
             stmt = conn.createStatement();
-            stmt.setQueryTimeout(timeout);
+            stmt.setQueryTimeout(queryTimeout);
             rs = stmt.executeQuery(validateQuery);
             return true;
         } finally {

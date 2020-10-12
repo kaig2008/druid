@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,13 @@
  */
 package com.alibaba.druid.sql.ast.expr;
 
-import com.alibaba.druid.sql.ast.SQLExprImpl;
-import com.alibaba.druid.sql.ast.SQLName;
+import com.alibaba.druid.sql.ast.*;
 import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
-public class SQLSequenceExpr extends SQLExprImpl {
+import java.util.Collections;
+import java.util.List;
+
+public class SQLSequenceExpr extends SQLExprImpl implements SQLReplaceable {
 
     private SQLName  sequence;
     private Function function;
@@ -33,12 +35,32 @@ public class SQLSequenceExpr extends SQLExprImpl {
         this.function = function;
     }
 
+    public SQLSequenceExpr clone() {
+        SQLSequenceExpr x = new SQLSequenceExpr();
+        if (sequence != null) {
+            x.setSequence(sequence.clone());
+        }
+        x.function = function;
+        return x;
+    }
+
     @Override
     protected void accept0(SQLASTVisitor visitor) {
         if (visitor.visit(this)) {
-            acceptChild(visitor, sequence);
+            if (this.sequence != null) {
+                this.sequence.accept(visitor);
+            }
         }
         visitor.endVisit(this);
+    }
+
+    @Override
+    public boolean replace(SQLExpr expr, SQLExpr target) {
+        if (this.sequence == expr) {
+            setSequence((SQLName) target);
+            return true;
+        }
+        return false;
     }
 
     public static enum Function {
@@ -51,6 +73,10 @@ public class SQLSequenceExpr extends SQLExprImpl {
             this.name = name;
             this.name_lcase = name.toLowerCase();
         }
+    }
+
+    public List<SQLObject> getChildren() {
+        return Collections.<SQLObject>singletonList(sequence);
     }
 
     public SQLName getSequence() {

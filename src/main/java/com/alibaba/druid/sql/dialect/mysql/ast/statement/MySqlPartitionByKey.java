@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +15,14 @@
  */
 package com.alibaba.druid.sql.dialect.mysql.ast.statement;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import com.alibaba.druid.sql.ast.SQLName;
+import com.alibaba.druid.sql.ast.SQLExpr;
 import com.alibaba.druid.sql.ast.SQLPartitionBy;
 import com.alibaba.druid.sql.dialect.mysql.ast.MySqlObject;
 import com.alibaba.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 import com.alibaba.druid.sql.visitor.SQLASTVisitor;
 
 public class MySqlPartitionByKey extends SQLPartitionBy implements MySqlObject {
-
-    private List<SQLName> columns = new ArrayList<SQLName>();
+    private int algorithm = 2;
 
     @Override
     protected void accept0(SQLASTVisitor visitor) {
@@ -48,15 +44,27 @@ public class MySqlPartitionByKey extends SQLPartitionBy implements MySqlObject {
         visitor.endVisit(this);
     }
 
-    public List<SQLName> getColumns() {
-        return columns;
-    }
-    
-    public void addColumn(SQLName column) {
-        if (column != null) {
-            column.setParent(this);
+    public void cloneTo(MySqlPartitionByKey x) {
+        super.cloneTo(x);
+        for (SQLExpr column : columns) {
+            SQLExpr c2 = column.clone();
+            c2.setParent(x);
+            x.columns.add(c2);
         }
-        this.columns.add(column);
+        x.algorithm = algorithm;
     }
 
+    public MySqlPartitionByKey clone() {
+        MySqlPartitionByKey x = new MySqlPartitionByKey();
+        cloneTo(x);
+        return x;
+    }
+
+    public int getAlgorithm() {
+        return algorithm;
+    }
+
+    public void setAlgorithm(int algorithm) {
+        this.algorithm = algorithm;
+    }
 }

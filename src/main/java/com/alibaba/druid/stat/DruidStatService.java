@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import javax.management.JMException;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
+import com.alibaba.druid.DbType;
 import com.alibaba.druid.sql.SQLUtils;
 import com.alibaba.druid.sql.ast.SQLStatement;
 import com.alibaba.druid.sql.visitor.SchemaStatVisitor;
@@ -243,7 +244,7 @@ public final class DruidStatService implements DruidStatServiceMBean {
         orderBy = orderBy == null ? DEFAULT_ORDERBY : orderBy;
         orderType = orderType == null ? DEFAULT_ORDER_TYPE : orderType;
 
-        if (! ORDER_TYPE_DESC.equals(orderType)) {
+        if (!ORDER_TYPE_DESC.equals(orderType)) {
             orderType = ORDER_TYPE_ASC;
         }
 
@@ -312,7 +313,7 @@ public final class DruidStatService implements DruidStatServiceMBean {
             return returnJSONResult(RESULT_CODE_ERROR, null);
         }
 
-        String dbType = (String) map.get("DbType");
+        DbType dbType = DbType.of((String) map.get("DbType"));
         String sql = (String) map.get("SQL");
 
         map.put("formattedSql", SQLUtils.format(sql, dbType));

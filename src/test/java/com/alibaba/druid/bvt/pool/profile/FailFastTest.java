@@ -4,8 +4,10 @@ import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.alibaba.druid.PoolTestCase;
 import org.junit.Assert;
 
 import com.alibaba.druid.pool.DataSourceNotAvailableException;
@@ -13,16 +15,24 @@ import com.alibaba.druid.pool.DruidDataSource;
 
 import junit.framework.TestCase;
 
-public class FailFastTest extends TestCase {
+public class FailFastTest extends PoolTestCase {
 
     private DruidDataSource dataSource;
-    
+
+    private AtomicInteger index = new AtomicInteger();
     private CountDownLatch latch = new CountDownLatch(1);
 
     @SuppressWarnings("serial")
     protected void setUp() throws Exception {
+        super.setUp();
+
         dataSource = new DruidDataSource() {
             public PhysicalConnectionInfo createPhysicalConnection() throws SQLException {
+                if (index.get() > 2) {
+                    return super.createPhysicalConnection();
+                }
+
+                index.incrementAndGet();
                 try {
                     latch.await();
                 } catch (InterruptedException e) {
@@ -45,6 +55,8 @@ public class FailFastTest extends TestCase {
 
     protected void tearDown() throws Exception {
         dataSource.close();
+
+        super.tearDown();
     }
 
     public void testDefault() throws Exception {
@@ -74,6 +86,13 @@ public class FailFastTest extends TestCase {
         connectEndLatch.await(3, TimeUnit.SECONDS);
         SQLException ex = errorHolder.get();
         Assert.assertTrue(ex instanceof DataSourceNotAvailableException);
+
+        for (int i = 0; i < 300; ++i) {
+            if (!dataSource.isFailContinuous()) {
+                break;
+            }
+            Thread.sleep(100 * 1);
+        }
     }
 
 }

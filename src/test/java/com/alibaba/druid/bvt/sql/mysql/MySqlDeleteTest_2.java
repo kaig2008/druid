@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,19 +38,19 @@ public class MySqlDeleteTest_2 extends MysqlTest {
         Assert.assertEquals("DELETE t1"
                 + "\nFROM t1"
                 + "\n\tLEFT JOIN t2 ON t1.id = t2.id"
-                + "\nWHERE t2.id IS NULL", SQLUtils.toMySqlString(stmt));
+                + "\nWHERE t2.id IS NULL;", SQLUtils.toMySqlString(stmt));
         Assert.assertEquals("delete t1"
                 + "\nfrom t1"
                 + "\n\tleft join t2 on t1.id = t2.id"
-                + "\nwhere t2.id is null", SQLUtils.toMySqlString(stmt, SQLUtils.DEFAULT_LCASE_FORMAT_OPTION));
+                + "\nwhere t2.id is null;", SQLUtils.toMySqlString(stmt, SQLUtils.DEFAULT_LCASE_FORMAT_OPTION));
 
         Assert.assertEquals(1, statementList.size());
 
         MySqlSchemaStatVisitor visitor = new MySqlSchemaStatVisitor();
         stmt.accept(visitor);
 
-//        System.out.println("Tables : " + visitor.getTables());
-//        System.out.println("fields : " + visitor.getColumns());
+        System.out.println("Tables : " + visitor.getTables());
+        System.out.println("fields : " + visitor.getColumns());
 //        System.out.println("coditions : " + visitor.getConditions());
 //        System.out.println("orderBy : " + visitor.getOrderByColumns());
         

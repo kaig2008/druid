@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,19 @@
  */
 package com.alibaba.druid.wall;
 
-import com.alibaba.druid.wall.spi.WallVisitorUtils;
+import static com.alibaba.druid.util.Utils.getBoolean;
+import static com.alibaba.druid.util.Utils.getInteger;
+import static com.alibaba.druid.wall.spi.WallVisitorUtils.loadResource;
 
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentSkipListSet;
 
-import static com.alibaba.druid.util.Utils.getBoolean;
-import static com.alibaba.druid.wall.spi.WallVisitorUtils.loadResource;
+import com.alibaba.druid.sql.SQLUtils;
+import com.alibaba.druid.wall.spi.WallVisitorUtils;
 
 public class WallConfig implements WallConfigMBean {
 
@@ -45,6 +50,7 @@ public class WallConfig implements WallConfigMBean {
     private boolean             hintAllow                   = true;
     private boolean             lockTableAllow              = true;
     private boolean             startTransactionAllow       = true;
+    private boolean             blockAllow                  = true;
 
     private boolean             conditionAndAlwayTrueAllow  = false;
     private boolean             conditionAndAlwayFalseAllow = false;
@@ -124,6 +130,11 @@ public class WallConfig implements WallConfigMBean {
     
     private boolean             completeInsertValuesCheck   = false;
     private int                 insertValuesCheckSize       = 3;
+
+    private int                 selectLimit                 = -1;
+
+    protected Map<String, Set<String>> updateCheckColumns = new HashMap<String, Set<String>>();
+    protected WallUpdateCheckHandler   updateCheckHandler;
 
     public WallConfig(){
         this.configFromProperties(System.getProperties());
@@ -270,6 +281,7 @@ public class WallConfig implements WallConfigMBean {
     }
 
     public WallConfig(String dir){
+        this();
         this.dir = dir;
         this.init();
     }
@@ -789,36 +801,124 @@ public class WallConfig implements WallConfigMBean {
         this.insertValuesCheckSize = insertValuesCheckSize;
     }
 
+    public boolean isBlockAllow() {
+        return blockAllow;
+    }
+
+    public void setBlockAllow(boolean blockAllow) {
+        this.blockAllow = blockAllow;
+    }
+
+    public int getSelectLimit() {
+        return selectLimit;
+    }
+
+    public void setSelectLimit(int selectLimit) {
+        this.selectLimit = selectLimit;
+    }
+
     public void configFromProperties(Properties properties) {
         {
-            String tenantColumn = properties.getProperty("druid.wall.tenantColumn");
-            if (tenantColumn != null) {
-                this.setTenantColumn(tenantColumn);
+            String propertyValue = properties.getProperty("druid.wall.tenantColumn");
+            if (propertyValue != null) {
+                this.setTenantColumn(propertyValue);
             }
         }
         {
-            Boolean selelctAllow = getBoolean(properties, "druid.wall.selelctAllow");
-            if (selelctAllow != null) {
-                this.setSelelctAllow(selelctAllow);
+            Boolean propertyValue = getBoolean(properties, "druid.wall.selelctAllow");
+            if (propertyValue != null) {
+                this.setSelelctAllow(propertyValue);
             }
         }
         {
-            Boolean updateAllow = getBoolean(properties, "druid.wall.updateAllow");
-            if (updateAllow != null) {
-                this.setUpdateAllow(updateAllow);
+            Boolean propertyValue = getBoolean(properties, "druid.wall.updateAllow");
+            if (propertyValue != null) {
+                this.setUpdateAllow(propertyValue);
             }
         }
         {
-            Boolean deleteAllow = getBoolean(properties, "druid.wall.deleteAllow");
-            if (deleteAllow != null) {
-                this.setDeleteAllow(deleteAllow);
+            Boolean propertyValue = getBoolean(properties, "druid.wall.deleteAllow");
+            if (propertyValue != null) {
+                this.setDeleteAllow(propertyValue);
             }
         }
         {
-            Boolean insertAllow = getBoolean(properties, "druid.wall.insertAllow");
-            if (insertAllow != null) {
-                this.setInsertAllow(insertAllow);
+            Boolean propertyValue = getBoolean(properties, "druid.wall.insertAllow");
+            if (propertyValue != null) {
+                this.setInsertAllow(propertyValue);
             }
         }
+        {
+            Boolean propertyValue = getBoolean(properties, "druid.wall.multiStatementAllow");
+            if (propertyValue != null) {
+                this.setMultiStatementAllow(propertyValue);
+            }
+        }
+        {
+            Integer propertyValue = getInteger(properties, "druid.wall.selectLimit");
+            if (propertyValue != null) {
+                this.setSelectLimit(propertyValue);
+            }
+        }
+        {
+            String propertyValue = properties.getProperty("druid.wall.updateCheckColumns");
+            if (propertyValue != null) {
+                String[] items = propertyValue.split(",");
+                for (String item : items) {
+                    addUpdateCheckCoumns(item);
+                }
+            }
+        }
+        {
+            Boolean propertyValue = getBoolean(properties, "druid.wall.updateWhereNoneCheck");
+            if (propertyValue != null) {
+                this.setUpdateWhereNoneCheck(propertyValue);
+            }
+        }
+        {
+            Boolean propertyValue = getBoolean(properties, "druid.wall.deleteWhereNoneCheck");
+            if (propertyValue != null) {
+                this.setDeleteWhereNoneCheck(propertyValue);
+            }
+        }
+    }
+
+    public void addUpdateCheckCoumns(String columnInfo) {
+        String[] items = columnInfo.split("\\.");
+        if (items.length != 2) {
+            return;
+        }
+        String table = SQLUtils.normalize(items[0]).toLowerCase();
+        String column = SQLUtils.normalize(items[1]).toLowerCase();
+        Set<String> columns = this.updateCheckColumns.get(table);
+        if (columns == null) {
+            columns = new LinkedHashSet<String>();
+            updateCheckColumns.put(table, columns);
+        }
+        columns.add(column);
+    }
+
+    public boolean isUpdateCheckTable(String tableName) {
+        if (updateCheckColumns.isEmpty()) {
+            return false;
+        }
+        String tableNameLower = SQLUtils.normalize(tableName).toLowerCase();
+        return updateCheckColumns.containsKey(tableNameLower);
+    }
+
+    public Set<String> getUpdateCheckTable(String tableName) {
+        if (updateCheckColumns.isEmpty()) {
+            return null;
+        }
+        String tableNameLower = SQLUtils.normalize(tableName).toLowerCase();
+        return updateCheckColumns.get(tableNameLower);
+    }
+
+    public WallUpdateCheckHandler getUpdateCheckHandler() {
+        return updateCheckHandler;
+    }
+
+    public void setUpdateCheckHandler(WallUpdateCheckHandler updateCheckHandler) {
+        this.updateCheckHandler = updateCheckHandler;
     }
 }

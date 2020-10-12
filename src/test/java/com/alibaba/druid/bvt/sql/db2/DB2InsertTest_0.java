@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,10 +59,8 @@ public class DB2InsertTest_0 extends DB2Test {
         // Assert.assertTrue(visitor.getColumns().contains(new Column("mytable", "full_name")));
 
         String output = SQLUtils.toSQLString(stmt, JdbcConstants.DB2);
-        Assert.assertEquals("INSERT INTO t"
-                + "\n\t(id, name)"
-                + "\nVALUES"
-                + "\n(?, ?), (?, ?), (?, ?)", //
+        Assert.assertEquals("INSERT INTO t (id, name)\n" +
+                        "VALUES (?, ?), (?, ?), (?, ?)", //
                             output);
     }
 }

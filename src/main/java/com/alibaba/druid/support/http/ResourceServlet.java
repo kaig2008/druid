@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2101 Alibaba Group Holding Ltd.
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,21 +15,22 @@
  */
 package com.alibaba.druid.support.http;
 
-import com.alibaba.druid.support.http.util.IPAddress;
-import com.alibaba.druid.support.http.util.IPRange;
-import com.alibaba.druid.support.logging.Log;
-import com.alibaba.druid.support.logging.LogFactory;
-import com.alibaba.druid.util.StringUtils;
-import com.alibaba.druid.util.Utils;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+
+import com.alibaba.druid.support.http.util.IPAddress;
+import com.alibaba.druid.support.http.util.IPRange;
+import com.alibaba.druid.support.logging.Log;
+import com.alibaba.druid.support.logging.LogFactory;
+import com.alibaba.druid.util.StringUtils;
+import com.alibaba.druid.util.Utils;
 
 @SuppressWarnings("serial")
 public abstract class ResourceServlet extends HttpServlet {
@@ -214,6 +215,7 @@ public abstract class ResourceServlet extends HttpServlet {
 
         if (isRequireAuth() //
             && !ContainsUser(request)//
+            && !checkLoginParam(request)//
             && !("/login.html".equals(path) //
                  || path.startsWith("/css")//
                  || path.startsWith("/js") //
@@ -260,6 +262,17 @@ public abstract class ResourceServlet extends HttpServlet {
     public boolean ContainsUser(HttpServletRequest request) {
         HttpSession session = request.getSession(false);
         return session != null && session.getAttribute(SESSION_USER_KEY) != null;
+    }
+
+    public boolean checkLoginParam(HttpServletRequest request) {
+        String usernameParam = request.getParameter(PARAM_NAME_USERNAME);
+        String passwordParam = request.getParameter(PARAM_NAME_PASSWORD);
+        if(null == username || null == password){
+            return false;
+        } else if (username.equals(usernameParam) && password.equals(passwordParam)) {
+            return true;
+        }
+        return false;
     }
 
     public boolean isRequireAuth() {

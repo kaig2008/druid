@@ -1,0 +1,786 @@
+/*
+ * Copyright 1999-2017 Alibaba Group Holding Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.alibaba.druid.sql.dialect.sqlserver.visitor;
+
+import com.alibaba.druid.DbType;
+import com.alibaba.druid.sql.SQLDialect;
+import com.alibaba.druid.sql.ast.*;
+import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.druid.sql.ast.expr.SQLSequenceExpr;
+import com.alibaba.druid.sql.ast.statement.*;
+import com.alibaba.druid.sql.ast.statement.SQLCreateTriggerStatement.TriggerType;
+import com.alibaba.druid.sql.dialect.sqlserver.SqlServer;
+import com.alibaba.druid.sql.dialect.sqlserver.ast.SQLServerOutput;
+import com.alibaba.druid.sql.dialect.sqlserver.ast.SQLServerSelectQueryBlock;
+import com.alibaba.druid.sql.dialect.sqlserver.ast.expr.SQLServerObjectReferenceExpr;
+import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.*;
+import com.alibaba.druid.sql.dialect.sqlserver.ast.stmt.SQLServerExecStatement.SQLServerParameter;
+import com.alibaba.druid.sql.parser.ParserException;
+import com.alibaba.druid.sql.visitor.SQLASTOutputVisitor;
+import com.alibaba.druid.util.FnvHash;
+
+import java.util.List;
+
+public class SQLServerOutputVisitor extends SQLASTOutputVisitor implements SQLServerASTVisitor {
+    public SQLServerOutputVisitor(StringBuilder appender) {
+        super(appender, DbType.sqlserver, SqlServer.DIALECT);
+    }
+
+    public SQLServerOutputVisitor(StringBuilder appender, DbType dbType, SQLDialect dialect) {
+        super(appender, dbType, dialect);
+    }
+
+    public SQLServerOutputVisitor(StringBuilder appender, boolean parameterized) {
+        super(appender, DbType.sqlserver, SqlServer.DIALECT, parameterized);
+    }
+
+    public SQLServerOutputVisitor(StringBuilder appender, DbType dbType, SQLDialect dialect, boolean parameterized) {
+        super(appender, dbType, dialect, parameterized);
+    }
+    public boolean visit(SQLServerSelectQueryBlock x) {
+        print0(ucase ? "SELECT " : "select ");
+
+        if (SQLSetQuantifier.ALL == x.getDistionOption()) {
+            print0(ucase ? "ALL " : "all ");
+        } else if (SQLSetQuantifier.DISTINCT == x.getDistionOption()) {
+            print0(ucase ? "DISTINCT " : "distinct ");
+        } else if (SQLSetQuantifier.UNIQUE == x.getDistionOption()) {
+            print0(ucase ? "UNIQUE " : "unique ");
+        }
+
+        SQLTop top = x.getTop();
+        if (top != null) {
+            visit(top);
+            print(' ');
+        }
+
+        printSelectList(x.getSelectList());
+        printInto(x);
+        printFrom(x);
+        printWhere(x);
+        printGroupBy(x);
+        printOrderBy(x);
+        printFetchFirst(x);
+        printAfterFetch(x);
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerObjectReferenceExpr x) {
+        print0(x.toString());
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerInsertStatement x) {
+        if (x.getWith() != null) {
+            x.getWith().accept(this);
+            println();
+        }
+        print0(ucase ? "INSERT " : "insert ");
+
+        if (x.getTop() != null) {
+            x.getTop().setParent(x);
+            x.getTop().accept(this);
+            print(' ');
+        }
+
+        print0(ucase ? "INTO " : "into ");
+
+        x.getTableSource().accept(this);
+
+        printInsertColumns(x.getColumns());
+
+        if (x.getOutput() != null) {
+            println();
+            x.getOutput().setParent(x);
+            x.getOutput().accept(this);
+        }
+
+        if (!x.getValuesList().isEmpty()) {
+            println();
+            print0(ucase ? "VALUES " : "values ");
+            for (int i = 0, size = x.getValuesList().size(); i < size; ++i) {
+                if (i != 0) {
+                    print(',');
+                    println();
+                }
+                x.getValuesList().get(i).accept(this);
+            }
+        }
+
+        if (x.getQuery() != null) {
+            println();
+            x.getQuery().accept(this);
+        }
+
+        if (x.isDefaultValues()) {
+            print0(ucase ? " DEFAULT VALUES" : " default values");
+        }
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerUpdateStatement x) {
+        print0(ucase ? "UPDATE " : "update ");
+
+        SQLTop top = x.getTop();
+        if (top != null) {
+            top.accept(this);
+            print(' ');
+        }
+
+        printTableSource(x.getTableSource());
+
+        println();
+        print0(ucase ? "SET " : "set ");
+        for (int i = 0, size = x.getItems().size(); i < size; ++i) {
+            if (i != 0) {
+                print0(", ");
+            }
+            SQLUpdateSetItem item = x.getItems().get(i);
+            visit(item);
+        }
+
+        SQLServerOutput output = x.getOutput();
+        if (output != null) {
+            println();
+            visit(output);
+        }
+
+        SQLTableSource from = x.getFrom();
+        if (from != null) {
+            println();
+            print0(ucase ? "FROM " : "from ");
+            printTableSource(from);
+        }
+
+        SQLExpr where = x.getWhere();
+        if (where != null) {
+            println();
+            indentCount++;
+            print0(ucase ? "WHERE " : "where ");
+            printExpr(where);
+            indentCount--;
+        }
+
+        return false;
+    }
+
+    public boolean visit(SQLExprTableSource x) {
+        printTableSourceExpr(x.getExpr());
+
+        String alias = x.getAlias();
+        if (alias != null) {
+            print(' ');
+            print0(alias);
+        }
+
+        if (isPrettyFormat() && x.hasAfterComment()) {
+            print(' ');
+            printlnComment(x.getAfterCommentsDirect());
+        }
+
+        if (x.getHints() != null && x.getHints().size() > 0) {
+            print0(ucase ? " WITH (" : " with (");
+            printAndAccept(x.getHints(), ", ");
+            print(')');
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLColumnDefinition x) {
+        boolean parameterized = this.parameterized;
+        this.parameterized = false;
+
+        String columnName = replaceQuota(x.getName().getSimpleName());
+        printName0(columnName);
+
+        if (x.getDataType() != null) {
+            print(' ');
+            x.getDataType().accept(this);
+        }
+
+        if (x.getDefaultExpr() != null) {
+            visitColumnDefault(x);
+        }
+
+        for (SQLColumnConstraint item : x.getConstraints()) {
+            print(' ');
+            item.accept(this);
+        }
+
+        final SQLColumnDefinition.Identity identity = x.getIdentity();
+        if (identity != null) {
+            print(' ');
+            identity.accept(this);
+        }
+
+        if (x.getEnable() != null) {
+            if (x.getEnable().booleanValue()) {
+                print0(ucase ? " ENABLE" : " enable");
+            }
+        }
+
+        this.parameterized = parameterized;
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerExecStatement x) {
+        print0(ucase ? "EXEC " : "exec ");
+
+        SQLName returnStatus = x.getReturnStatus();
+        if (returnStatus != null) {
+            returnStatus.accept(this);
+            print0(" = ");
+        }
+
+        SQLName moduleName = x.getModuleName();
+        if (moduleName != null) {
+            moduleName.accept(this);
+            print(' ');
+        } else {
+            print0(" (");
+        }
+        printAndAccept(x.getParameters(), ", ");
+
+        if (moduleName == null) {
+            print(')');
+        }
+        if (x.isRecompile()) {
+            print0(ucase ? " WITH RECOMPILE" : " with recompile");
+        }
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerSetTransactionIsolationLevelStatement x) {
+        print0(ucase ? "SET TRANSACTION ISOLATION LEVEL " : "set transaction isolation level ");
+        print0(x.getLevel());
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLSetStatement x) {
+        print0(ucase ? "SET " : "set ");
+
+        SQLSetStatement.Option option = x.getOption();
+        if (option != null) {
+            print(option.name());
+            print(' ');
+        }
+
+        List<SQLAssignItem> items = x.getItems();
+        for (int i = 0; i < items.size(); i++) {
+            if (i != 0) {
+                print0(", ");
+            }
+
+            SQLAssignItem item = x.getItems().get(i);
+            item.getTarget().accept(this);
+
+            SQLExpr value = item.getValue();
+            if (value instanceof SQLIdentifierExpr
+                    && (((SQLIdentifierExpr) value).nameHashCode64() == FnvHash.Constants.ON
+                    || ((SQLIdentifierExpr) value).nameHashCode64() == FnvHash.Constants.OFF)) {
+                print(' ');
+            } else {
+                print0(" = ");
+            }
+            value.accept(this);
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerOutput x) {
+        print0(ucase ? "OUTPUT " : "output ");
+        printSelectList(x.getSelectList());
+
+        if (x.getInto() != null) {
+            this.indentCount++;
+            println();
+            print0(ucase ? "INTO " : "into ");
+            x.getInto().accept(this);
+
+            if (x.getColumns().size() > 0) {
+                this.indentCount++;
+                println();
+                print('(');
+                for (int i = 0, size = x.getColumns().size(); i < size; ++i) {
+                    if (i != 0) {
+                        if (i % 5 == 0) {
+                            println();
+                        }
+                        print0(", ");
+                    }
+
+                    x.getColumns().get(i).accept(this);
+                }
+                print(')');
+                this.indentCount--;
+            }
+        }
+        this.indentCount--;
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLBlockStatement x) {
+        print0(ucase ? "BEGIN" : "begin");
+        this.indentCount++;
+        println();
+        for (int i = 0, size = x.getStatementList().size(); i < size; ++i) {
+            if (i != 0) {
+                println();
+            }
+            SQLStatement stmt = x.getStatementList().get(i);
+            stmt.setParent(x);
+            stmt.accept(this);
+            print(';');
+        }
+        this.indentCount--;
+        println();
+        print0(ucase ? "END" : "end");
+        return false;
+    }
+
+    @Override
+    protected void printGrantOn(SQLGrantStatement x) {
+        if (x.getResource() != null) {
+            print0(ucase ? " ON " : " on ");
+
+            if (x.getResourceType() != null) {
+                print0(x.getResourceType().name());
+                print0("::");
+            }
+
+            x.getResource().accept(this);
+        }
+    }
+
+    public boolean visit(SQLSelect x) {
+        super.visit(x);
+        if (x.isForBrowse()) {
+            println();
+            print0(ucase ? "FOR BROWSE" : "for browse");
+        }
+
+        if (x.getForXmlOptionsSize() > 0 || x.getXmlPath() != null) {
+            println();
+            print0(ucase ? "FOR XML " : "for xml ");
+            // single FOR XML clause: the mode/path comes first, then comma-separated options
+            // (including the first one). Previously the first option was dropped and the path was
+            // emitted as a second, duplicate "FOR XML" clause (see issue #6564).
+            boolean first = true;
+            if (x.getXmlPath() != null) {
+                x.getXmlPath().accept(this);
+                first = false;
+            }
+            for (int i = 0; i < x.getForXmlOptions().size(); ++i) {
+                if (!first) {
+                    print0(", ");
+                }
+                print0(x.getForXmlOptions().get(i));
+                first = false;
+            }
+        }
+
+        if (x.getOffset() != null) {
+            println();
+            print0(ucase ? "OFFSET " : "offset ");
+            x.getOffset().accept(this);
+            print0(ucase ? " ROWS" : " rows");
+
+            if (x.getRowCount() != null) {
+                print0(ucase ? " FETCH NEXT " : " fetch next ");
+                x.getRowCount().accept(this);
+                print0(ucase ? " ROWS ONLY" : " rows only");
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLCommitStatement x) {
+        print0(ucase ? "COMMIT" : "commit");
+
+        if (x.isWork()) {
+            print0(ucase ? " WORK" : " work");
+        } else {
+            print0(ucase ? " TRANSACTION" : " transaction");
+            if (x.getTransactionName() != null) {
+                print(' ');
+                x.getTransactionName().accept(this);
+            }
+            if (x.getDelayedDurability() != null) {
+                print0(ucase ? " WITH ( DELAYED_DURABILITY = " : " with ( delayed_durability = ");
+                x.getDelayedDurability().accept(this);
+                print0(" )");
+            }
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerRollbackStatement x) {
+        print0(ucase ? "ROLLBACK" : "rollback");
+
+        if (x.isWork()) {
+            print0(ucase ? " WORK" : " work");
+        } else {
+            print0(ucase ? " TRANSACTION" : " transaction");
+            if (x.getName() != null) {
+                print(' ');
+                x.getName().accept(this);
+            }
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerWaitForStatement x) {
+        print0(ucase ? "WAITFOR" : "waitfor");
+
+        if (x.getDelay() != null) {
+            print0(ucase ? " DELAY " : " delay ");
+            x.getDelay().accept(this);
+        } else if (x.getTime() != null) {
+            print0(ucase ? " TIME " : " time ");
+            x.getTime().accept(this);
+        }
+        if (x.getStatement() != null) {
+            print0(ucase ? " DELAY " : " delay ");
+            x.getStatement().accept(this);
+        }
+
+        if (x.getTimeout() != null) {
+            print0(ucase ? " ,TIMEOUT " : " ,timeout ");
+            x.getTimeout().accept(this);
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerParameter x) {
+        // TODO Auto-generated method stub
+        x.getExpr().accept(this);
+        if (x.getType()) {
+            print0(ucase ? " OUT" : " out");
+        }
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLStartTransactionStatement x) {
+        print0(ucase ? "BEGIN TRANSACTION" : "begin transaction");
+        if (x.getName() != null) {
+            print(' ');
+            x.getName().accept(this);
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLScriptCommitStatement x) {
+        print0(ucase ? "GO" : "go");
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLCreateUserStatement x) {
+        print0(ucase ? "CREATE USER " : "create user ");
+        x.getUser().accept(this);
+        print0(ucase ? " WITH PASSWORD = " : " with password = ");
+
+        SQLExpr passoword = x.getPassword();
+
+        if (passoword instanceof SQLIdentifierExpr) {
+            print('\'');
+            passoword.accept(this);
+            print('\'');
+        } else {
+            passoword.accept(this);
+        }
+
+        return false;
+    }
+
+    public boolean visit(SQLSequenceExpr x) {
+        SQLSequenceExpr.Function function = x.getFunction();
+        switch (function) {
+            case NextVal:
+                print0(ucase ? "NEXT VALUE FOR " : "next value for ");
+                break;
+            default:
+                throw new ParserException("not support function : " + function);
+        }
+        printExpr(x.getSequence());
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLAlterTableAddColumn x) {
+        boolean odps = isOdps();
+        print0(ucase ? "ADD " : "add ");
+        printAndAccept(x.getColumns(), ", ");
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerTryCatchStatement x) {
+        print0(ucase ? "BEGIN TRY" : "begin try");
+        this.indentCount++;
+        for (SQLStatement stmt : x.getTryStatements()) {
+            println();
+            stmt.accept(this);
+        }
+        this.indentCount--;
+        println();
+        print0(ucase ? "END TRY" : "end try");
+        println();
+        print0(ucase ? "BEGIN CATCH" : "begin catch");
+        this.indentCount++;
+        for (SQLStatement stmt : x.getCatchStatements()) {
+            println();
+            stmt.accept(this);
+        }
+        this.indentCount--;
+        println();
+        print0(ucase ? "END CATCH" : "end catch");
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLServerThrowStatement x) {
+        print0(ucase ? "THROW" : "throw");
+        if (x.getErrorNumber() != null) {
+            print(' ');
+            x.getErrorNumber().accept(this);
+            print0(", ");
+            x.getMessage().accept(this);
+            print0(", ");
+            x.getState().accept(this);
+        }
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLWhileStatement x) {
+        print0(ucase ? "WHILE " : "while ");
+        x.getCondition().accept(this);
+        println();
+        print0(ucase ? "BEGIN" : "begin");
+        this.indentCount++;
+        for (int i = 0, size = x.getStatements().size(); i < size; ++i) {
+            println();
+            SQLStatement stmt = x.getStatements().get(i);
+            stmt.accept(this);
+        }
+        this.indentCount--;
+        println();
+        print0(ucase ? "END" : "end");
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLCreateProcedureStatement x) {
+        if (x.isCreate()) {
+            if (x.isOrReplace()) {
+                print0(ucase ? "CREATE OR ALTER PROCEDURE " : "create or alter procedure ");
+            } else {
+                print0(ucase ? "CREATE PROCEDURE " : "create procedure ");
+            }
+        } else {
+            print0(ucase ? "ALTER PROCEDURE " : "alter procedure ");
+        }
+
+        x.getName().accept(this);
+
+        int paramSize = x.getParameters().size();
+        if (paramSize > 0) {
+            this.indentCount++;
+            for (int i = 0; i < paramSize; ++i) {
+                println();
+                SQLParameter param = x.getParameters().get(i);
+                param.accept(this);
+                if (i < paramSize - 1) {
+                    print(',');
+                }
+            }
+            this.indentCount--;
+        }
+
+        SQLName authid = x.getAuthid();
+        if (authid != null) {
+            println();
+            print0(ucase ? "WITH EXECUTE AS " : "with execute as ");
+            authid.accept(this);
+        }
+
+        println();
+        print0(ucase ? "AS" : "as");
+        println();
+
+        SQLStatement block = x.getBlock();
+        if (block != null) {
+            block.accept(this);
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLCreateTriggerStatement x) {
+        if (x.isOrReplace()) {
+            print0(ucase ? "CREATE OR ALTER TRIGGER " : "create or alter trigger ");
+        } else {
+            print0(ucase ? "CREATE TRIGGER " : "create trigger ");
+        }
+
+        x.getName().accept(this);
+
+        println();
+        print0(ucase ? "ON " : "on ");
+        x.getOn().accept(this);
+
+        println();
+        TriggerType triggerType = x.getTriggerType();
+        if (TriggerType.INSTEAD_OF.equals(triggerType)) {
+            print0(ucase ? "INSTEAD OF " : "instead of ");
+        } else if (TriggerType.AFTER.equals(triggerType)) {
+            print0(ucase ? "AFTER " : "after ");
+        } else if (triggerType != null) {
+            String name = triggerType.name();
+            print0(ucase ? name : name.toLowerCase());
+            print(' ');
+        }
+
+        boolean first = true;
+        if (x.isInsert()) {
+            print0(ucase ? "INSERT" : "insert");
+            first = false;
+        }
+        if (x.isUpdate()) {
+            if (!first) {
+                print0(", ");
+            }
+            print0(ucase ? "UPDATE" : "update");
+            first = false;
+        }
+        if (x.isDelete()) {
+            if (!first) {
+                print0(", ");
+            }
+            print0(ucase ? "DELETE" : "delete");
+        }
+
+        println();
+        print0(ucase ? "AS" : "as");
+        println();
+
+        if (x.getBody() != null) {
+            x.getBody().accept(this);
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLCreateFunctionStatement x) {
+        boolean create = x.isCreate();
+        if (create) {
+            if (x.isOrReplace()) {
+                print0(ucase ? "CREATE OR ALTER FUNCTION " : "create or alter function ");
+            } else {
+                print0(ucase ? "CREATE FUNCTION " : "create function ");
+            }
+        } else {
+            print0(ucase ? "ALTER FUNCTION " : "alter function ");
+        }
+
+        x.getName().accept(this);
+
+        print0(" (");
+        int paramSize = x.getParameters().size();
+        if (paramSize > 0) {
+            this.indentCount++;
+            for (int i = 0; i < paramSize; ++i) {
+                if (i != 0) {
+                    print(',');
+                }
+                println();
+                SQLParameter param = x.getParameters().get(i);
+                param.accept(this);
+            }
+            this.indentCount--;
+            println();
+        }
+        print(')');
+
+        SQLDataType returnDataType = x.getReturnDataType();
+        if (returnDataType != null) {
+            println();
+            print0(ucase ? "RETURNS " : "returns ");
+            returnDataType.accept(this);
+        }
+
+        List<SQLAssignItem> options = x.getOptions();
+        if (options != null && !options.isEmpty()) {
+            println();
+            print0(ucase ? "WITH " : "with ");
+            for (int i = 0; i < options.size(); i++) {
+                if (i != 0) {
+                    print0(", ");
+                }
+                options.get(i).getTarget().accept(this);
+            }
+        }
+
+        println();
+        print0(ucase ? "AS" : "as");
+        println();
+
+        SQLStatement block = x.getBlock();
+        if (block != null) {
+            block.accept(this);
+        }
+
+        return false;
+    }
+
+    @Override
+    protected void printAfterFetch(SQLSelectQueryBlock queryBlock) {
+        if (queryBlock instanceof SQLServerSelectQueryBlock) {
+            SQLServerSelectQueryBlock sqlServerSelectQueryBlock = ((SQLServerSelectQueryBlock) queryBlock);
+            if (!sqlServerSelectQueryBlock.getOptions().isEmpty()) {
+                println();
+                print0(ucase ? "OPTION(" : "option(");
+                printAndAccept(sqlServerSelectQueryBlock.getOptions(), ", ");
+                print0(")");
+            }
+        }
+    }
+}
